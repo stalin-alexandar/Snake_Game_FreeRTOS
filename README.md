@@ -30,10 +30,9 @@ The 16x2 LCD gives you a tiny 16-column, 2-row playfield. The snake moves throug
 - Move the joystick to change the snake's direction
 - Eat the food (shown as a small dot) to grow longer
 - The snake **wraps around** the screen edges (no walls!)
-- The snake **can cross itself** (no game over for that)
-- The game gets faster every 5 points you score
-- **Win condition:** Fill all 32 cells on the screen!
+- **Win condition:** Fill all 32 cells on the screen (the whole grid)!
 - After winning, the game shows a victory screen for 3 seconds, then restarts
+- The game gets faster every 5 points you score
 
 ---
 
@@ -118,19 +117,6 @@ The game starts slow and gets faster:
 | 10-14 | 260ms |
 | ... | keeps increasing |
 | 25+ | 100ms (fast!) |
-
----
-
-## LED Indicators
-
-The four onboard LEDs show what's happening:
-
-| LED | Color | What It Means |
-|-----|-------|---------------|
-| LD3 | Green | System is on and ready |
-| LD4 | Orange | Snake is moving |
-| LD5 | Red | Game event |
-| LD6 | Blue | Level complete or special event |
 
 ---
 
