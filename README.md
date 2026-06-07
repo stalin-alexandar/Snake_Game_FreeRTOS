@@ -84,27 +84,57 @@ git clone https://github.com/stalin-alexandar/Snake_Game_FreeRTOS.git
 
 ## How It Works (Behind the Scenes)
 
+### System Architecture
+
 The game uses FreeRTOS to run three things at the same time:
 
-| Task | Job | How Often |
-|------|-----|-----------|
-| **InputTask** | Reads the joystick | Every 50ms |
-| **GameTask** | Moves the snake, checks food, updates score | Every 100-300ms |
-| **DisplayTask** | Draws the game to the LCD | Only when something changes |
+```
++-------------------------------------+
+|        FreeRTOS Scheduler            |
++----------+------------+------------+
+| InputTask|  GameTask   | DisplayTask|
+| Priority 3| Priority 2  | Priority 1 |
+| (Highest)|             | (Lowest)   |
++----------+------------+------------+
+| Joystick |  Snake     |  LCD I2C   |
+| ADC      |  Engine    |  Driver    |
+| PA2, PA3 |  Movement, |  16x2 at   |
+|          |  Food,     |  0x27      |
+|          |  Scoring   |            |
++-----+----+-----+------+-----+------+
+      |          |            |
+      | input_queue | game_update_sem | lcd_mutex
+      +----------+------------+-------+
+```
 
-These three tasks talk to each other using:
-- A **queue** to pass joystick commands
-- A **semaphore** to tell the display "hey, redraw!"
-- A **mutex** to make sure only one task uses the LCD at a time
+### Task Descriptions
+
+| Task | Priority | Period | What It Does |
+|------|----------|--------|-------------|
+| **InputTask** | 3 (highest) | 50 ms | Reads joystick ADC values, applies deadzone filtering, detects direction changes, sends valid directions to input_queue |
+| **GameTask** | 2 | 300-100 ms | Processes player input from queue, updates snake position, checks food collisions, manages score and speed progression |
+| **DisplayTask** | 1 (lowest) | On signal | Waits on game_update_sem, redraws the entire 16x2 LCD grid with snake and food positions |
+
+### Synchronization Primitives
+
+| Primitive | Type | What It Does |
+|-----------|------|-------------|
+| input_queue | FreeRTOS Queue | Passes joystick direction commands from InputTask to GameTask |
+| game_update_sem | Binary Semaphore | Signals DisplayTask that the game state has changed and needs redrawing |
+| lcd_mutex | Mutex | Protects shared LCD I2C bus access from concurrent writes |
 
 ### The Screen
 
 The 16x2 LCD has 32 character cells. Each character can show a 5x8 pixel pattern, so the actual play area is **80 pixels wide x 16 pixels tall**.
 
 The game uses custom characters for:
-- **Snake head** - a solid block with eyes
-- **Snake body** - a solid block
-- **Food** - a small dot
+| Index | Character | What It Looks Like |
+|-------|-----------|-------------------|
+| 1 | Snake Head | Solid filled block with eyes |
+| 2 | Snake Body | Solid filled block |
+| 3 | Food | Small diamond/dot pattern |
+
+> **Important:** Custom character indices must be 1-7. Using index 0 causes C-string functions to treat it as a null terminator, making segments invisible.
 
 ### Speed Progression
 
@@ -118,6 +148,97 @@ The game starts slow and gets faster:
 | ... | keeps increasing |
 | 25+ | 100ms (fast!) |
 
+**Rule:** Speed increases by 20ms for every 5 points scored.
+
+---
+
+## Technical Specifications
+
+### FreeRTOS Configuration
+
+| Parameter | Value |
+|-----------|-------|
+| CPU Clock | 168 MHz |
+| Tick Rate | 1000 Hz |
+| Total Heap | 20 KB |
+| Max Priorities | 5 |
+| Preemption | Enabled |
+| Stack Overflow Check | Mode 2 |
+| Software Timers | Enabled |
+| Mutexes | Enabled |
+
+### Resource Usage
+
+- **RAM:** ~10 KB (of 128 KB available)
+- **Flash:** ~5% of 1 MB
+- **Tasks:** 3 application + idle + timer
+- **Synchronization:** 1 queue, 1 binary semaphore, 1 mutex
+
+### Joystick Configuration
+
+| Parameter | Value |
+|-----------|-------|
+| ADC Channels | X=CH2 (PA2), Y=CH3 (PA3) |
+| Resolution | 12-bit (0-4095) |
+| Center Value | 2048 |
+| Deadzone | +/-200 from center |
+| Left/Down Threshold | < 1800 |
+| Right/Up Threshold | > 2300 |
+
+### LCD Configuration
+
+| Parameter | Value |
+|-----------|-------|
+| Type | 16x2 Character LCD |
+| Interface | I2C via PCF8574 expander |
+| I2C Address | 0x27 |
+| I2C Pins | SCL=PB6, SDA=PB7 |
+| Mode | 4-bit interface |
+
+### Pin Configuration
+
+| Pin | Function | Connection |
+|-----|----------|------------|
+| PA2 | ADC1 CH2 | Joystick X-axis |
+| PA3 | ADC1 CH3 | Joystick Y-axis |
+| PB6 | I2C1 SCL | LCD SCL |
+| PB7 | I2C1 SDA | LCD SDA |
+| PD13 | GPIO Output | LD3 Green LED |
+| PD12 | GPIO Output | LD4 Orange LED |
+| PD14 | GPIO Output | LD5 Red LED |
+| PD15 | GPIO Output | LD6 Blue LED |
+
+---
+
+## Technical Notes
+
+- The LCD driver uses **4-bit mode** via the PCF8574 I2C expander, bit-banging the enable pulse through software delays.
+- Joystick readings use a **+/-200 deadzone** from the center value (2048) to filter noise.
+- The random food position generator uses `HAL_GetTick()` as the seed for `srand()`.
+- Display updates are **semaphore-triggered** (not periodic), so the LCD only redraws when the game state changes.
+- The `lcd_mutex` ensures thread-safe LCD access if any ISR or higher-priority task attempts to use the display.
+
+---
+
+## Limitations
+
+- **16x2 display** limits the visible game area (32 cells max)
+- **No score persistence** - score resets on power cycle
+- **No pause functionality**
+- **No self-collision** - snake can cross itself (intentional design choice)
+- **No sound** - no buzzer or audio feedback
+
+---
+
+## Future Enhancements
+
+- [ ] Add EEPROM/Flash score persistence
+- [ ] Implement pause/resume with button press
+- [ ] Add self-collision detection for increased difficulty
+- [ ] Support larger displays (LCD 20x4 or graphical OLED)
+- [ ] Add sound effects via onboard buzzer
+- [ ] Implement difficulty selection menu
+
 ---
 
 ## Project Structure
@@ -127,27 +248,18 @@ Snake_Game_FreeRTOS/
 ├── STM32_SnakeGame/
 │   ├── App/
 │   │   ├── DisplayManager/    # LCD drawing code
+│   │   │   ├── lcd_display.c  # I2C LCD driver (4-bit mode via PCF8574)
+│   │   │   └── lcd_display.h
 │   │   ├── GameEngine/        # Snake movement, food, scoring
+│   │   │   ├── snake_game.c   # Snake engine with custom characters
+│   │   │   └── snake_game.h
 │   │   └── InputManager/      # Joystick reading code
+│   │       ├── joystick.c     # ADC joystick driver with deadzone
+│   │       └── joystick.h
 │   ├── Core/
 │   │   ├── Inc/               # Header files and FreeRTOS config
-│   │   └── Src/               # main.c and system files
-│   ├── Drivers/               # STM32 HAL library
-│   └── Startup/               # Boot assembly code
-└── README.md                  # This file
-```
-
----
-
-## Tips
-
-- The LCD needs an I2C backpack (PCF8574 chip). Most "I2C LCD" modules have this built in.
-- The I2C address is usually 0x27. If your LCD doesn't show anything, try 0x3F.
-- The joystick uses analog input. Make sure it is connected to PA2 (X) and PA3 (Y).
-- If the snake doesn't move, check your joystick wiring and make sure the game initialized properly.
-
----
-
-## Author
-
-**Stalin Alexandar** - [@stalin-alexandar](https://github.com/stalin-alexandar)
+│   │   │   ├── main.h
+│   │   │   ├── FreeRTOSConfig.h
+│   │   │   ├── stm32f4xx_hal_conf.h
+│   │   │   └── stm32f4xx_it.h
+│   │   └── Src/               # mai
